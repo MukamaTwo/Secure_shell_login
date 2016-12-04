@@ -11,67 +11,105 @@
 #include <pwd.h>
 #include <sys/types.h>
 #include <crypt.h>
-/* Uncomment next line in step 2 */
-/* #include "pwent.h" */
+#include "pwent.h" 
 
 #define TRUE 1
 #define FALSE 0
 #define LENGTH 16
+#define AGELIMIT 60     
+#define ATTEMPTS 10
+
 
 void sighandler() {
-
-	/* add signalhandling routines here */
-	/* see 'man 2 signal' */
-}
+    signal(SIGINT,SIG_IGN);    /*ctrl-c*/
+    signal(SIGTSTP,SIG_IGN);   /*ctrl-z*/
+    signal(SIGQUIT,SIG_IGN);   /*ctrl-\*/
+    }
 
 int main(int argc, char *argv[]) {
 
-	struct passwd *passwddata; /* this has to be redefined in step 2 */
-	/* see pwent.h */
+    mypwent *passwddata;
+    char important[LENGTH] = "***IMPORTANT***";
+    char user[LENGTH];
+    char prompt[] = "password: ";
+    char *user_pass;
+    char *hash;
+    char * const argv1[] = {"/bin/ls", NULL};
+    char * const envp[] = {NULL};
 
-	char important[LENGTH] = "***IMPORTANT***";
+    sighandler();
+   
+    while (TRUE) {
+       /* check what important variable contains - do not remove, part of buffer overflow test */
+       printf("Value of variable 'important' before input of login name: %s\n",
+          important);
 
-	char user[LENGTH];
-	//char   *c_pass; //you might want to use this variable later...
-	char prompt[] = "password: ";
-	char *user_pass;
+       printf("login: ");
+       fflush(NULL); /* Flush all  output buffers */
+       __fpurge(stdin); /* Purge any data in stdin buffer */
 
-	sighandler();
+       if (fgets(user, LENGTH, stdin ) == NULL) /* gets() is vulnerable to buffer */
+           exit(-1); /*  overflow attacks.  */
+       user[strlen(user)-1] = '\0';
 
-	while (TRUE) {
-		/* check what important variable contains - do not remove, part of buffer overflow test */
-		printf("Value of variable 'important' before input of login name: %s\n",
-				important);
+       /* check to see if important variable is intact after input of login name - do not remove */
+       printf("Value of variable 'important' after input of login name: %*.*s\n",
+              LENGTH - 1, LENGTH - 1, important);
 
-		printf("login: ");
-		fflush(NULL); /* Flush all  output buffers */
-		__fpurge(stdin); /* Purge any data in stdin buffer */
+       user_pass = getpass(prompt);
+       if((passwddata = mygetpwnam(user))==NULL)
+             printf("User does not exist\n");                 
 
-		if (gets(user) == NULL) /* gets() is vulnerable to buffer */
-			exit(0); /*  overflow attacks.  */
+       if (passwddata != NULL) {			
 
-		/* check to see if important variable is intact after input of login name - do not remove */
-		printf("Value of variable 'important' after input of login name: %*.*s\n",
-				LENGTH - 1, LENGTH - 1, important);
+          if(passwddata->pwfailed >= ATTEMPTS){
+             printf("%d incorrect password attempts\n", ATTEMPTS);
+                           
+             if(!mysetpwent(passwddata->pwname, passwddata))
+                printf("Data not updated\n");
 
-		user_pass = getpass(prompt);
-		passwddata = getpwnam(user);
+             sleep(10);  
+          }
 
-		if (passwddata != NULL) {
-			/* You have to encrypt user_pass for this to work */
-			/* Don't forget to include the salt */
+       /* password encryption using the salt */
+       if((hash = crypt(user_pass, passwddata->passwd_salt))==NULL)			
+          printf(" crypt program failed \n");
 
-			if (!strcmp(user_pass, passwddata->pw_passwd)) {
+       if (!strncmp(hash, passwddata->passwd, strlen(passwddata->passwd)) ){
+          printf(" You're in !\n");
 
-				printf(" You're in !\n");
+          if(passwddata->pwfailed){
+             printf(" Number of failed attempts: %d \n", passwddata->pwfailed);
+             passwddata->pwfailed = 0;				
+          }
 
-				/*  check UID, see setuid(2) */
-				/*  start a shell, use execve(2) */
+          passwddata->pwage = passwddata->pwage +1;
 
-			}
-		}
-		printf("Login Incorrect \n");
-	}
-	return 0;
+          if(!mysetpwent(passwddata->pwname, passwddata))				
+             printf("Password data not updated\n");
+
+          if(passwddata->pwage>= AGELIMIT){
+             printf("Your password has expired and must be changed!!\n");
+          }
+
+          /*  check UID, see setuid(2) */
+          /*  starting a shell */
+          if((setuid(passwddata->uid))==-1)
+             printf("Setuid program failed  \n");
+
+          if((execve ("/bin/ls", argv1, envp))==-1);
+             printf("execve program failed \n");
+       }
+       else {
+          sleep(5);    //sleep for 5 seconds for a wrong login in attempt
+          passwddata->pwfailed = passwddata->pwfailed +1;
+          if(!mysetpwent(passwddata->pwname, passwddata))
+             printf("Password data not updated\n");
+
+       }			
+       }
+    printf("Login Incorrect \n");		
+    } //end while loop
+    return 0;
 }
 
